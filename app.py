@@ -1,10 +1,11 @@
 import streamlit as st
 import tempfile
+import fitz  # PyMuPDF
+from PIL import Image
 from google.cloud import vision
 from google.oauth2 import service_account
 import openai
 from docx import Document
-from pdf2image import convert_from_path
 import os
 
 # === Streamlit App Setup ===
@@ -15,11 +16,11 @@ st.title("📤 Upload Legal PDF → 🔍 OCR → 🤖 GPT-4 → 📄 Word Export
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # === Load Google Cloud Vision Credentials ===
-CREDENTIAL_PATH = "gcloud_key.json"  # file is in root of doc-ai repo
+CREDENTIAL_PATH = "gcloud_key.json"
 credentials = service_account.Credentials.from_service_account_file(CREDENTIAL_PATH)
 vision_client = vision.ImageAnnotatorClient(credentials=credentials)
 
-# === File Upload ===
+# === Upload Section ===
 uploaded_file = st.file_uploader("Upload a scanned legal PDF file", type=["pdf"])
 
 if uploaded_file:
@@ -27,16 +28,18 @@ if uploaded_file:
         tmp_file.write(uploaded_file.read())
         pdf_path = tmp_file.name
 
-    st.success("✅ File uploaded. Extracting text via OCR...")
+    st.success("✅ PDF uploaded. Extracting text with OCR...")
 
-    # Convert PDF to images
-    images = convert_from_path(pdf_path)
+    # === Convert PDF Pages to Images using PyMuPDF ===
+    doc = fitz.open(pdf_path)
     full_text = ""
 
-    for img in images:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_img:
-            img.save(tmp_img.name)
-            with open(tmp_img.name, "rb") as img_file:
+    for page in doc:
+        pix = page.get_pixmap(dpi=300)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
+            img_path = tmp_img.name
+            pix.save(img_path)
+            with open(img_path, "rb") as img_file:
                 content = img_file.read()
                 image = vision.Image(content=content)
                 response = vision_client.document_text_detection(image=image)
@@ -44,14 +47,14 @@ if uploaded_file:
 
     st.text_area("📃 Extracted OCR Text", full_text, height=300)
 
-    # === GPT-4 Legal Field Extraction ===
+    # === GPT-4 Legal Extraction ===
     if st.button("🧠 Analyze with GPT-4"):
         st.info("Running GPT-4 analysis...")
 
         prompt = f"""
-You are a legal assistant. Extract structured legal information from this OCR'd document.
+You are a legal assistant. Extract structured legal information from this scanned document text.
 
-Return a JSON object with:
+Return as a JSON object with:
 - Agreement Type
 - Parties Involved
 - Effective Date
@@ -60,14 +63,14 @@ Return a JSON object with:
 - Duration
 - Key Clauses
 
-Document text:
+Document:
 {full_text}
 """
 
         response = openai.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You extract structured legal fields from scanned documents."},
+                {"role": "system", "content": "You extract structured legal data from OCR documents."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2
@@ -76,13 +79,13 @@ Document text:
         result = response.choices[0].message.content.strip()
         st.code(result, language="json")
 
-        # Export result to Word
-        doc = Document()
-        doc.add_heading("Legal Document Summary", level=1)
-        doc.add_paragraph(result)
+        # === Export to Word ===
+        docx = Document()
+        docx.add_heading("Legal Document Summary", level=1)
+        docx.add_paragraph(result)
 
-        doc_path = os.path.join(tempfile.gettempdir(), "Legal_Summary.docx")
-        doc.save(doc_path)
+        word_path = os.path.join(tempfile.gettempdir(), "Legal_Summary.docx")
+        docx.save(word_path)
 
-        with open(doc_path, "rb") as f:
+        with open(word_path, "rb") as f:
             st.download_button("⬇️ Download Word Document", f, file_name="Legal_Summary.docx")
