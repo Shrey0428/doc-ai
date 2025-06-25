@@ -7,18 +7,21 @@ from docx import Document
 from pdf2image import convert_from_path
 import os
 
-# === Streamlit Config ===
+# === Streamlit App Setup ===
 st.set_page_config(page_title="📄 Legal Document Decoder", layout="wide")
 st.title("📤 Upload Legal PDF → 🔍 OCR → 🤖 GPT-4 → 📄 Word Export")
 
 # === Load API Keys ===
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-CREDENTIAL_PATH = "/mount/src/legal-doc-ai/gcloud_key.json"
+
+# === Load Google Cloud Vision Credentials ===
+CREDENTIAL_PATH = "gcloud_key.json"  # file is in root of doc-ai repo
 credentials = service_account.Credentials.from_service_account_file(CREDENTIAL_PATH)
 vision_client = vision.ImageAnnotatorClient(credentials=credentials)
 
 # === File Upload ===
 uploaded_file = st.file_uploader("Upload a scanned legal PDF file", type=["pdf"])
+
 if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(uploaded_file.read())
@@ -41,13 +44,14 @@ if uploaded_file:
 
     st.text_area("📃 Extracted OCR Text", full_text, height=300)
 
-    # === GPT-4 Legal Analysis ===
+    # === GPT-4 Legal Field Extraction ===
     if st.button("🧠 Analyze with GPT-4"):
-        st.info("Running GPT-4...")
-        prompt = f"""
-You are a legal assistant. Extract structured information from this legal document.
+        st.info("Running GPT-4 analysis...")
 
-Return a JSON object with these fields:
+        prompt = f"""
+You are a legal assistant. Extract structured legal information from this OCR'd document.
+
+Return a JSON object with:
 - Agreement Type
 - Parties Involved
 - Effective Date
@@ -56,25 +60,26 @@ Return a JSON object with these fields:
 - Duration
 - Key Clauses
 
-Document:
+Document text:
 {full_text}
 """
+
         response = openai.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You extract structured legal data from OCR text."},
+                {"role": "system", "content": "You extract structured legal fields from scanned documents."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2
         )
 
-        output = response.choices[0].message.content.strip()
-        st.code(output, language="json")
+        result = response.choices[0].message.content.strip()
+        st.code(result, language="json")
 
-        # Save output to Word
+        # Export result to Word
         doc = Document()
         doc.add_heading("Legal Document Summary", level=1)
-        doc.add_paragraph(output)
+        doc.add_paragraph(result)
 
         doc_path = os.path.join(tempfile.gettempdir(), "Legal_Summary.docx")
         doc.save(doc_path)
