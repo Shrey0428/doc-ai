@@ -2,4 +2,5 @@ streamlit
 openai
 google-cloud-vision
 python-docx
-pdf2image
+pymupdf
+pillow
